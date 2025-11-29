@@ -1,6 +1,11 @@
 import { mat4 } from 'gl-matrix';
-import { PIECE_TYPES, COLORS, BOARD_Y } from '../constants.js';
+import { PIECE_TYPES, COLORS, BOARD_Y } from '../constants/constants.js';
 
+/**
+ * InstanceManager — collects per-instance transform/color buffers and uploads them
+ * to a single GPU instance buffer for instanced drawing.
+ * Used to render board squares, pieces, crowns and markers efficiently.
+ */
 export default class InstanceManager {
   constructor(device, instanceBufRef, maxInstancesRefGetter) {
     this.device = device;
@@ -10,6 +15,11 @@ export default class InstanceManager {
     this.instanceCount = 0;
   }
 
+  /**
+   * pushInstance — append an instance with transform, color and optional pulse.
+   * Accepts a 4x4 model matrix and a color vec3; pulse toggles an effect flag.
+   * Instances are buffered until uploadInstances() is called.
+   */
   pushInstance(modelMatrix, color, pulse = 0) {
     const arr = new Float32Array(21);
     arr.set(modelMatrix, 0);
@@ -21,7 +31,11 @@ export default class InstanceManager {
     this.instances.push(arr);
   }
 
-  // Helper to create transform matrices with gl-matrix
+  /**
+   * createModelMatrix — convenience helper to build a model transform.
+   * Translates then scales a fresh mat4 and returns it for pushInstance.
+   * This keeps instance transforms simple and readable at call sites.
+   */
   createModelMatrix(tx, ty, tz, sx, sy, sz) {
     const model = mat4.create();
     mat4.translate(model, model, [tx, ty, tz]);
@@ -29,6 +43,11 @@ export default class InstanceManager {
     return model;
   }
 
+  /**
+   * buildInstances — populate the instance list from a given gameState.
+   * Iterates board squares, pieces, selection and valid moves to emit
+   * the visible instances which will be uploaded for rendering.
+   */
   buildInstances(gameState) {
     this.instances = [];
 
@@ -103,6 +122,11 @@ export default class InstanceManager {
     this.uploadInstances();
   }
 
+  /**
+   * ensureCapacity — ensure that the device instance buffer is large enough.
+   * Calls recreateInstanceBuffer when the current instance count exceeds capacity.
+   * This keeps instance uploads safe and avoids buffer overruns.
+   */
   ensureCapacity(recreateInstanceBuffer) {
     const total = this.instances.length;
     if (total > this.getMaxInstances()) {
@@ -111,6 +135,11 @@ export default class InstanceManager {
     }
   }
 
+  /**
+   * uploadInstances — flatten the collected instances and write to GPU buffer.
+   * Creates a single Float32Array and uploads via device.queue.writeBuffer.
+   * Updates instanceCount to reflect the uploaded instance array size.
+   */
   uploadInstances() {
     const total = this.instances.length;
     if (total === 0) {

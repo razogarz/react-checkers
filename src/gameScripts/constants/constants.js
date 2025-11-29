@@ -1,3 +1,5 @@
+import { vec3 } from 'gl-matrix';
+
 export const BOARD_SIZE = 8;
 export const PIECE_TYPES = {
   EMPTY: 0,
@@ -21,3 +23,6 @@ export const COLORS = {
 
 export const BOARD_Y = -0.5;
 export const INSTANCE_SIZE = 21 * 4; // 20 floats * 4 bytes
+
+export const CENTER = vec3.fromValues(0, 0, 0);
+export const UP = vec3.fromValues(0, 1, 0);

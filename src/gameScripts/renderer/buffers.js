@@ -1,6 +1,11 @@
-import { INSTANCE_SIZE } from '../constants.js';
-import { cubeGeometry } from '../geometry.js';
+import { INSTANCE_SIZE } from '../constants/constants.js';
+import { cubeGeometry } from '../constants/geometry.js';
 
+/**
+ * createBuffers — allocate GPU buffers for the cube geometry and instances.
+ * Pre-creates vertex/index buffers and an instance buffer sized for max instances.
+ * Returns handles plus a recreateInstanceBuffer helper for dynamic resizing.
+ */
 export function createBuffers(device, initialMaxInstances = 200) {
   const posBuf = device.createBuffer({
     size: cubeGeometry.positions.byteLength,
@@ -32,6 +37,11 @@ export function createBuffers(device, initialMaxInstances = 200) {
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
+  /**
+   * recreateInstanceBuffer — expand the instance buffer when capacity is exceeded.
+   * Destroys the old GPU buffer and allocates a new one with larger size.
+   * No-op if requested size is less than or equal to the current capacity.
+   */
   function recreateInstanceBuffer(newMax) {
     if (newMax <= maxInstances) return;
     instanceBuf.destroy();

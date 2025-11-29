@@ -1,3 +1,8 @@
+/**
+ * ensureDepthTexture — make sure the WebGPU depth texture exists & matches canvas size.
+ * Creates a depth texture when missing and updates it if the canvas resized.
+ * Returns the (possibly replaced) depthState object for the renderer to use.
+ */
 export function ensureDepthTexture(device, canvas, depthState) {
   if (depthState.texture &&
       depthState.width === canvas.width &&

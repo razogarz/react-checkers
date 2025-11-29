@@ -1,10 +1,9 @@
+/**
+ * renderPass — record and submit a render pass for the current frame.
+ * Binds vertex/index/instance buffers, sets pipeline & bind groups and draws
+ * the configured cube mesh using instanced rendering from instanceManager.
+ */
 export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager) {
-  // Validate pipeline before use
-  if (!pipeline) {
-    console.error('Pipeline is undefined!');
-    return;
-  }
-
   const commandEncoder = device.createCommandEncoder();
   const textureView = context.getCurrentTexture().createView();
 
@@ -25,22 +24,12 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
 
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, uniformBindGroup);
-  // Use the buffer names returned by createBuffers: posBuf / normBuf / idxBuf
-  if (!buffers.posBuf || !buffers.normBuf || !buffers.idxBuf || !buffers.instanceBuf) {
-    console.error('Missing buffers on render call:', {
-      posBuf: !!buffers.posBuf,
-      normBuf: !!buffers.normBuf,
-      idxBuf: !!buffers.idxBuf,
-      instanceBuf: !!buffers.instanceBuf
-    });
-    pass.end();
-    return;
-  }
 
   pass.setVertexBuffer(0, buffers.posBuf);
   pass.setVertexBuffer(1, buffers.normBuf);
   pass.setVertexBuffer(2, buffers.instanceBuf);
   pass.setIndexBuffer(buffers.idxBuf, 'uint16');
+  
   pass.drawIndexed(36, instanceManager.instanceCount, 0, 0, 0); // 36 indices for cube
 
   pass.end();

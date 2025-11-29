@@ -1,7 +1,5 @@
-import { chooseAIMove } from './ai/ai.js';
+import { chooseAIMove } from './ai.js';
 
-// Create an AI runner that performs and schedules AI moves for a given gameState.
-// Accepts callback hooks so the AI runner remains UI-agnostic.
 /**
  * createAiRunner — UI-agnostic scheduler that drives AI moves for a gameState.
  * Accepts callback hooks (applyMove, buildInstances, updateUI, checkGameOver)
@@ -10,10 +8,10 @@ import { chooseAIMove } from './ai/ai.js';
 export default function createAiRunner({
   gameState,
   aiColor,
-  applyMove,      // function(sx,sy,tx,ty,move)
-  buildInstances, // function()
-  updateUI,       // function()
-  checkGameOver,  // function()
+  applyMove,      
+  buildInstances, 
+  updateUI,       
+  checkGameOver,  
   initialAiMode = false,
   initialDifficulty = 'easy'
 }) {
@@ -21,11 +19,6 @@ export default function createAiRunner({
   let difficulty = initialDifficulty; // 'easy' | 'medium' | 'hard'
   let timeout = null;
 
-  /**
-   * clearPending — cancel any scheduled AI timeout.
-   * Internal helper to avoid multiple pending operations and leaks.
-   * Used before scheduling or when disabling AI mode.
-   */
   function clearPending() {
     if (timeout) {
       clearTimeout(timeout);
@@ -33,11 +26,6 @@ export default function createAiRunner({
     }
   }
 
-  /**
-   * setAiMode — enable or disable automatic AI execution.
-   * When disabled it also clears any pending scheduled moves.
-   * The function toggles internal runner state only (idempotent).
-   */
   function setAiMode(enabled) {
     aiMode = !!enabled;
     if (!aiMode) clearPending();
@@ -47,23 +35,15 @@ export default function createAiRunner({
     difficulty = d || 'easy';
   }
 
-  /**
-   * chooseMove — wrapper around chooseAIMove to pick a candidate move.
-   * Keeps selection logic local so the runner can remain decoupled.
-   * Returns a move object or null when no valid moves are available.
-   */
   function chooseMove() {
+    // Map UI difficulty values to ai engine modes
     if (difficulty === 'easy') return chooseAIMove(gameState, aiColor, { difficulty: 'easy' });
     if (difficulty === 'medium') return chooseAIMove(gameState, aiColor, { difficulty: 'medium', depth: 4 });
     if (difficulty === 'hard') return chooseAIMove(gameState, aiColor, { difficulty: 'medium', depth: 7 });
+    // default
     return chooseAIMove(gameState, aiColor, { difficulty: 'easy' });
   }
 
-  /**
-   * performAIMove — schedule and perform one AI move after an optional delay.
-   * Calls applyMove, updates instances/UI and rechecks game-over state.
-   * Reschedules itself when the AI continues to have the turn (chain behavior).
-   */
   function performAIMove(delay = 250) {
     clearPending();
     timeout = setTimeout(() => {
@@ -80,11 +60,6 @@ export default function createAiRunner({
     }, delay);
   }
 
-  /**
-   * maybeAIMove — entrypoint to trigger an AI move if aiMode is enabled and
-   * the game state's current turn belongs to the AI.
-   * No-op when aiMode is disabled or it's not the AI's turn.
-   */
   function maybeAIMove() {
     if (!aiMode) return;
     if (gameState.currentTurn === aiColor) {
@@ -92,11 +67,6 @@ export default function createAiRunner({
     }
   }
 
-  /**
-   * cancel — stops any scheduled AI activity immediately.
-   * Useful for cleanup when deactivating the UI or changing modes.
-   * Leaves game state untouched; only affects the runner scheduling.
-   */
   function cancel() {
     clearPending();
   }
