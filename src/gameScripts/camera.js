@@ -75,7 +75,8 @@ export default class Camera {
     mat4.perspective(proj, 45 * Math.PI / 180, aspect, 0.1, 100);
     mat4.multiply(viewprojection, proj, view);
 
-    return viewprojection;
+    // return both view-projection matrix and eye position for use by renderer
+    return { vpMatrix: viewprojection, eye };
   }
 
   /**
@@ -84,7 +85,8 @@ export default class Camera {
    * Used to construct world-space rays for picking and board intersection.
    */
   unproject(ndcX, ndcY, ndcZ) {
-    const viewprojMatrix = this.getViewProjectionMatrix();
+    const vpResult = this.getViewProjectionMatrix();
+    const viewprojMatrix = vpResult.vpMatrix;
     const invViewProjMatrix = mat4.create();
     mat4.invert(invViewProjMatrix, viewprojMatrix);
 

@@ -1,15 +1,9 @@
 import { PIECE_TYPES, BOARD_SIZE } from '../constants/constants.js';
 
-/**
- * chooseAIMove — choose a single valid AI move for the given color.
- * Prefers capture moves when available and handles in-progress capture chains.
- * Returns a move object or null when no moves exist for the color.
- */
 export function chooseAIMove(gameState, aiColor, options = {}) {
   const { difficulty = 'easy', depth = 4 } = options;
   if (difficulty === 'easy') return chooseAIMoveEasy(gameState, aiColor);
   if (difficulty === 'medium') return chooseAIMoveMedium(gameState, aiColor, depth);
-  // fallback
   return chooseAIMoveEasy(gameState, aiColor);
 }
 
@@ -53,9 +47,7 @@ function chooseAIMoveEasy(gameState, aiColor) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// --- Medium: alpha-beta search with simple evaluation ---
 function chooseAIMoveMedium(gameState, aiColor, maxDepth = 4) {
-  // gather top-level moves for aiColor
   const initialMoves = collectMovesForColor(gameState, aiColor);
   if (initialMoves.length === 0) return null;
 
@@ -74,7 +66,6 @@ function chooseAIMoveMedium(gameState, aiColor, maxDepth = 4) {
     }
   }
 
-  // break ties randomly
   return bestMoves[Math.floor(Math.random() * bestMoves.length)];
 }
 
@@ -113,7 +104,6 @@ function collectMovesForColor(gameState, color) {
 }
 
 function evaluateState(gameState, aiColor) {
-  // simple material + mobility evaluation
   const PIECE_VALUE = { man: 100, king: 300 };
   let score = 0;
 
@@ -131,7 +121,6 @@ function evaluateState(gameState, aiColor) {
     }
   }
 
-  // mobility: difference in available moves
   const myMoves = collectMovesForColor(gameState, aiColor).length;
   const oppColor = aiColor === PIECE_TYPES.RED ? PIECE_TYPES.BLACK : PIECE_TYPES.RED;
   const oppMoves = collectMovesForColor(gameState, oppColor).length;
@@ -141,19 +130,16 @@ function evaluateState(gameState, aiColor) {
 }
 
 function minimax(state, depth, alpha, beta, aiColor) {
-  // terminal conditions
   const currentColor = state.currentTurn;
   const moves = collectMovesForColor(state, currentColor);
   if (moves.length === 0) {
-    // current player cannot move -> they lose
-    if (currentColor === aiColor) return -100000; // AI to move and cannot -> losing
-    return 100000; // opponent cannot move -> AI wins
+    if (currentColor === aiColor) return -100000; 
+    return 100000; 
   }
 
   if (depth <= 0) return evaluateState(state, aiColor);
 
   if (currentColor === aiColor) {
-    // maximize
     let value = -Infinity;
     for (const mv of moves) {
       const s = state.clone();
@@ -165,7 +151,6 @@ function minimax(state, depth, alpha, beta, aiColor) {
     }
     return value;
   } else {
-    // minimize
     let value = Infinity;
     for (const mv of moves) {
       const s = state.clone();

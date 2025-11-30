@@ -3,7 +3,7 @@
  * Binds vertex/index/instance buffers, sets pipeline & bind groups and draws
  * the configured cube mesh using instanced rendering from instanceManager.
  */
-export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager) {
+export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager, sky) {
   const commandEncoder = device.createCommandEncoder();
   const textureView = context.getCurrentTexture().createView();
 
@@ -21,6 +21,16 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
       depthStoreOp: 'store'
     }
   });
+
+  // Draw sky dome first if available
+  if (sky && sky.pipeline) {
+    pass.setPipeline(sky.pipeline);
+    pass.setBindGroup(0, sky.uniformBindGroup);
+    pass.setVertexBuffer(0, buffers.skyPosBuf);
+    pass.setVertexBuffer(1, buffers.skyUvBuf);
+    pass.setIndexBuffer(buffers.skyIdxBuf, 'uint32');
+    pass.drawIndexed(buffers.skyIndexCount, 1, 0, 0, 0);
+  }
 
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, uniformBindGroup);

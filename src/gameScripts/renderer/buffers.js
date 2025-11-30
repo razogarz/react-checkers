@@ -1,5 +1,6 @@
 import { INSTANCE_SIZE } from '../constants/constants.js';
 import { cubeGeometry } from '../constants/geometry.js';
+import { sphereGeometry } from '../constants/sphereGeometry.js';
 
 /**
  * createBuffers — allocate GPU buffers for the cube geometry and instances.
@@ -25,6 +26,25 @@ export function createBuffers(device, initialMaxInstances = 200) {
   });
   device.queue.writeBuffer(idxBuf, 0, cubeGeometry.indices);
 
+  // --- sky sphere buffers (separate mesh used for the sky dome) ---
+  const skyPosBuf = device.createBuffer({
+    size: sphereGeometry.positions.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(skyPosBuf, 0, sphereGeometry.positions);
+
+  const skyUvBuf = device.createBuffer({
+    size: sphereGeometry.uvs.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(skyUvBuf, 0, sphereGeometry.uvs);
+
+  const skyIdxBuf = device.createBuffer({
+    size: sphereGeometry.indices.byteLength,
+    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(skyIdxBuf, 0, sphereGeometry.indices);
+
   let maxInstances = initialMaxInstances;
   let instanceBuf = device.createBuffer({
     size: maxInstances * INSTANCE_SIZE,
@@ -34,6 +54,13 @@ export function createBuffers(device, initialMaxInstances = 200) {
   const uniformBufferSize = (16 + 4) * 4; // vp(16) + lightDir(4)
   const uniformBuffer = device.createBuffer({
     size: uniformBufferSize,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+  });
+
+  // Additional uniform buffer for the sky pipeline: vp + camPos.xyz + radius
+  const skyUniformSize = (16 + 4) * 4; // reuse 20 float slots (vp + 4 floats for camPos/radius)
+  const skyUniformBuffer = device.createBuffer({
+    size: skyUniformSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -54,8 +81,11 @@ export function createBuffers(device, initialMaxInstances = 200) {
 
   return {
     posBuf, normBuf, idxBuf,
+    // sky resources
+    skyPosBuf, skyUvBuf, skyIdxBuf, skyIndexCount: sphereGeometry.indices.length,
     get instanceBuf() { return instanceBuf; },
     uniformBuffer,
+    skyUniformBuffer,
     get maxInstances() { return maxInstances; },
     recreateInstanceBuffer
   };

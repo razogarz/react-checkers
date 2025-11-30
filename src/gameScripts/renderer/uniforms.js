@@ -25,3 +25,24 @@ export function updateUniforms(device, uniformBuffer, vpMatrix, lightDir = [0.5,
   data[19] = time;         
   device.queue.writeBuffer(uniformBuffer, 0, data);
 }
+
+/**
+ * createSkyUniformBuffer — allocate a uniform buffer for sky shader (vp + camPos + radius)
+ */
+export function createSkyUniformBuffer(device) {
+  const size = 20 * 4; // vp(16) + camPos.xyz + radius
+  return device.createBuffer({ size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+}
+
+/**
+ * updateSkyUniforms — write vp matrix, camera position and sky radius into the buffer.
+ */
+export function updateSkyUniforms(device, skyUniformBuffer, vpMatrix, camPos = [0,0,0], radius = 50.0) {
+  const data = new Float32Array(20);
+  data.set(vpMatrix, 0);
+  data[16] = camPos[0];
+  data[17] = camPos[1];
+  data[18] = camPos[2];
+  data[19] = radius;
+  device.queue.writeBuffer(skyUniformBuffer, 0, data);
+}

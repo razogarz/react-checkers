@@ -138,8 +138,8 @@ export default function UseCheckersGame() {
     function renderLoop() {
       if (!mounted) return;
       
-      const vpMatrix = cameraRef.current.getViewProjectionMatrix();
-      rendererRef.current.render(vpMatrix);
+      const { vpMatrix, eye } = cameraRef.current.getViewProjectionMatrix();
+      rendererRef.current.render(vpMatrix, eye);
       animationFrameRef.current = requestAnimationFrame(renderLoop);
     }
     renderLoop();

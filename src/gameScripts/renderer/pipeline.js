@@ -1,5 +1,6 @@
 import shaderCode from '../../shaders/shader.wgsl?raw';
 import { INSTANCE_SIZE } from '../constants/constants.js';
+import skyShaderCode from '../../shaders/sky.wgsl?raw';
 
 /*
  * createPipeline — compile shaders and assemble a WebGPU render pipeline.
@@ -68,6 +69,36 @@ export async function createPipeline(device, format, uniformBuffer) {
       binding: 0,
       resource: { buffer: uniformBuffer }
     }]
+  });
+
+  return { pipeline, uniformBindGroup };
+}
+
+export async function createSkyPipeline(device, format, skyUniformBuffer, sampler, textureView) {
+  const module = device.createShaderModule({ code: skyShaderCode });
+
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: {
+      module,
+      entryPoint: 'vs_main',
+      buffers: [
+        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }], stepMode: 'vertex' },
+        { arrayStride: 2 * 4, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }], stepMode: 'vertex' }
+      ]
+    },
+    fragment: { module, entryPoint: 'fs_main', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'back' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less' }
+  });
+
+  const uniformBindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: skyUniformBuffer } },
+      { binding: 1, resource: sampler },
+      { binding: 2, resource: textureView }
+    ]
   });
 
   return { pipeline, uniformBindGroup };
