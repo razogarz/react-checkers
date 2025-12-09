@@ -63,132 +63,110 @@ export default class Renderer {
       () => this.buffers.maxInstances
     );
 
-    // Try loading checker.glb (if present). Attach GPU buffers to buffers.checker.
+    // Load checker.glb
     try {
       const checker = await loadCheckerModel(this.device, '/checker.glb');
       this.buffers.checker = checker;
-      try { console.debug('Checker GLB loaded', { indexCount: checker.indexCount, indexFormat: checker.indexFormat }); } catch (e) { }
     } catch (e) {
-      // ignore if missing — fallback to cube-based pieces
-      console.info('No checker.glb or load failed - using cube pieces', e?.message || e);
+      console.info('No checker.glb - using cube pieces');
     }
 
-    // Try loading a table model from a few common names (case / extension variants)
-    try {
-      const tableCandidates = ['/table.glb', '/Table.glb', '/table.gltf', '/Table.gltf'];
-      let loaded = null;
-      for (const candidate of tableCandidates) {
-        try {
-          console.debug('Renderer: trying to load table candidate', candidate);
-          const table = await loadCheckerModel(this.device, candidate);
-          loaded = { table, path: candidate };
-          break;
-        } catch (e) {
-          // not found or failed - keep trying
-          console.info('Renderer: table candidate failed', candidate, e?.message || e);
-        }
+    // Load table model
+    let table = null;
+    const tableCandidates = ['/table.glb', '/Table.glb', '/table.gltf', '/Table.gltf'];
+    for (const candidate of tableCandidates) {
+      try {
+        table = await loadCheckerModel(this.device, candidate);
+        if (table) break;
+      } catch (e) { }
+    }
+
+    if (table) {
+      this.buffers.table = table;
+
+      // Place table
+      const sizes = table.bounds.size;
+      const desiredFootprint = 16.0;
+      const maxAxis = Math.max(sizes[0] || 1e-6, sizes[2] || 1e-6);
+      const uniformScale = desiredFootprint / maxAxis;
+      const ty = (typeof this.buffers.table.bounds.max[1] === 'number') ? (BOARD_Y - table.bounds.max[1] * uniformScale + 0.02) : BOARD_Y + 0.04;
+
+      const m = mat4.create();
+      mat4.translate(m, m, [0.0, ty, 0.0]);
+      mat4.scale(m, m, [uniformScale, uniformScale, uniformScale]);
+
+      if (this.buffers.singleInstanceBuf) {
+        const arr = new Float32Array(21);
+        arr.set(m, 0);
+        arr[16] = 1.0; arr[17] = 1.0; arr[18] = 1.0; arr[19] = 0.0; arr[20] = 0.0;
+        this.device.queue.writeBuffer(this.buffers.singleInstanceBuf, 0, arr);
       }
-      if (loaded) {
-        const table = loaded.table;
-        this.buffers.table = table;
-        console.debug('Renderer: loaded table from', loaded.path);
 
-        // compute a reasonable placement so the table sits beneath the checker board
+      // PBR Setup
+      if (!table.tanBuf) {
+        const vertCount = table.posBuf.size / 12;
+        const tanData = new Float32Array(vertCount * 4);
+        for (let i = 0; i < vertCount; i++) {
+          tanData[i * 4 + 0] = 1; tanData[i * 4 + 3] = 1;
+        }
+        const buf = this.device.createBuffer({ size: tanData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+        new Float32Array(buf.getMappedRange()).set(tanData);
+        buf.unmap();
+        table.tanBuf = buf;
+      }
+
+      const maps = {
+        baseColor: this.defaults.white,
+        orm: this.defaults.dielectric,
+        normal: this.defaults.normal,
+        emissive: this.defaults.black
+      };
+
+      if (table.material) {
+        const m = table.material;
+        const upload = (bmp, format = 'rgba8unorm') => {
+          if (!bmp) return null;
+          const tex = this.device.createTexture({ size: [bmp.width, bmp.height, 1], format, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+          this.device.queue.copyExternalImageToTexture({ source: bmp }, { texture: tex }, [bmp.width, bmp.height, 1]);
+          return tex.createView();
+        };
+        if (m.baseColor) maps.baseColor = upload(m.baseColor);
+        if (m.normal) maps.normal = upload(m.normal);
+        if (m.orm) maps.orm = upload(m.orm);
+        if (m.emissive) maps.emissive = upload(m.emissive);
+      }
+
+      const sampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
+      try {
+        const pbrObj = await createPBRPipeline(this.device, this.format, this.buffers.uniformBuffer, sampler, maps);
+        this.tablePipeline = pbrObj.pipeline;
+        this.tableBindGroup = pbrObj.bindGroup;
+      } catch (e) {
+        console.warn('PBR pipeline creation failed', e);
+      }
+
+      // Ground Setup
+      if (this.buffers.groundInstanceBuf) {
+        const groundM = mat4.create();
+        mat4.translate(groundM, groundM, [0.0, -5.0, 0.0]);
+        mat4.scale(groundM, groundM, [200.0, 0.5, 200.0]);
+        const garr = new Float32Array(21);
+        garr.set(groundM, 0);
+        garr[16] = 0.15; garr[17] = 0.6; garr[18] = 0.2; garr[19] = 0.0; garr[20] = 0.0;
+        this.device.queue.writeBuffer(this.buffers.groundInstanceBuf, 0, garr);
+
         try {
-          const sizes = table.bounds.size;
-          // desired footprint slightly larger than board (8 units) so table extends under it
-          const desiredFootprint = 16.0;
-          const maxAxis = Math.max(sizes[0] || 1e-6, sizes[2] || 1e-6);
-          const uniformScale = desiredFootprint / maxAxis;
-          const ty = (typeof this.buffers.table.bounds.max[1] === 'number') ? (BOARD_Y - table.bounds.max[1] * uniformScale + 0.02) : BOARD_Y + 0.04;
-
-          const m = mat4.create();
-          mat4.translate(m, m, [0.0, ty, 0.0]);
-          mat4.scale(m, m, [uniformScale, uniformScale, uniformScale]);
-
-          // write this transform + brown color into the singleInstanceBuf so table is tinted like pieces
-          if (this.buffers.singleInstanceBuf) {
-            const arr = new Float32Array(21);
-            arr.set(m, 0);
-            arr[16] = 1.0; arr[17] = 1.0; arr[18] = 1.0; arr[19] = 0.0; arr[20] = 0.0;
-            this.device.queue.writeBuffer(this.buffers.singleInstanceBuf, 0, arr);
-          }
-        } catch (e) { console.warn('Failed to place table automatically', e); }
-
-        // PBR Pipeline Setup
-        try {
-          // Ensure Tangents
-          if (!table.tanBuf) {
-            const vertCount = table.posBuf.size / 12; // 3 floats * 4 bytes
-            const tanData = new Float32Array(vertCount * 4);
-            for (let i = 0; i < vertCount; i++) {
-              tanData[i * 4 + 0] = 1; tanData[i * 4 + 1] = 0; tanData[i * 4 + 2] = 0; tanData[i * 4 + 3] = 1;
-            }
-            const buf = this.device.createBuffer({ size: tanData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
-            new Float32Array(buf.getMappedRange()).set(tanData);
-            buf.unmap();
-            table.tanBuf = buf;
-            console.debug('Renderer: generated dummy tangents');
-          }
-
-          const maps = {
-            baseColor: this.defaults.white,
-            orm: this.defaults.dielectric,
-            normal: this.defaults.normal,
-            emissive: this.defaults.black
-          };
-
-          if (table.material) {
-            const m = table.material;
-            const upload = (bmp, format = 'rgba8unorm') => {
-              if (!bmp) return null;
-              const tex = this.device.createTexture({ size: [bmp.width, bmp.height, 1], format, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
-              this.device.queue.copyExternalImageToTexture({ source: bmp }, { texture: tex }, [bmp.width, bmp.height, 1]);
-              return tex.createView();
-            };
-            if (m.baseColor) maps.baseColor = upload(m.baseColor);
-            if (m.normal) maps.normal = upload(m.normal);
-            if (m.orm) maps.orm = upload(m.orm);
-            if (m.emissive) maps.emissive = upload(m.emissive);
-          }
-
-          const sampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
-          const pbrObj = await createPBRPipeline(this.device, this.format, this.buffers.uniformBuffer, sampler, maps);
-          this.tablePipeline = pbrObj.pipeline;
-          this.tableBindGroup = pbrObj.bindGroup;
-          console.debug('Renderer: wired up PBR pipeline');
-        } catch (e) { console.warn('PBR setup failed', e); }
-
-        // Also create ground
-        try {
-          if (this.buffers.groundInstanceBuf) {
-            const groundM = mat4.create();
-            mat4.translate(groundM, groundM, [0.0, -5.0, 0.0]);
-            mat4.scale(groundM, groundM, [200.0, 0.5, 200.0]);
-            const garr = new Float32Array(21);
-            garr.set(groundM, 0);
-            garr[16] = 0.15; garr[17] = 0.6; garr[18] = 0.2; garr[19] = 0.0; garr[20] = 0.0;
-            this.device.queue.writeBuffer(this.buffers.groundInstanceBuf, 0, garr);
-
-            // Load grass texture
-            try {
-              const img = await fetch('/texture/grass.jpg').then(r => r.ok ? r.blob() : null).then(b => b ? createImageBitmap(b) : null);
-              if (img) {
-                const tex = this.device.createTexture({ size: [img.width, img.height, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
-                this.device.queue.copyExternalImageToTexture({ source: img }, { texture: tex }, [img.width, img.height, 1]);
-                const sampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
-                const texView = tex.createView();
-                const groundPipelineObj = await createTexturedPipeline(this.device, this.format, this.buffers.uniformBuffer, sampler, texView);
-                this.groundPipeline = groundPipelineObj.pipeline;
-                this.groundBindGroup = groundPipelineObj.uniformBindGroup;
-              }
-            } catch (e) { }
+          const img = await fetch('/texture/grass.jpg').then(r => r.ok ? r.blob() : null).then(b => b ? createImageBitmap(b) : null);
+          if (img) {
+            const tex = this.device.createTexture({ size: [img.width, img.height, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+            this.device.queue.copyExternalImageToTexture({ source: img }, { texture: tex }, [img.width, img.height, 1]);
+            const texView = tex.createView();
+            const groundPipelineObj = await createTexturedPipeline(this.device, this.format, this.buffers.uniformBuffer, sampler, texView);
+            this.groundPipeline = groundPipelineObj.pipeline;
+            this.groundBindGroup = groundPipelineObj.uniformBindGroup;
           }
         } catch (e) { }
       }
-    } catch (e) {
-      // unexpected error — log and continue without table
-      console.warn('Unexpected error trying to load table models', e?.message || e);
     }
 
     // Sky resources: load panorama texture from public and create pipeline

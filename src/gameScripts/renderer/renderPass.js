@@ -84,19 +84,16 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
   // draw first batch: all board cubes
   pass.drawIndexed(36, instanceManager.cubeCount || 0, 0, 0, 0); // 36 indices for cube
 
-  // draw GLB checker primitives (if available) using the same instance buffer
+  // draw GLB checker primitives
   if (buffers.checker && instanceManager.checkerCount > 0) {
-    try { console.debug('renderPass: drawing GLB checkers', { firstCheckerIndex: instanceManager.firstCheckerIndex, checkerCount: instanceManager.checkerCount, indexCount: buffers.checker.indexCount }); } catch (e) { }
     const checker = buffers.checker;
     pass.setVertexBuffer(0, checker.posBuf);
     pass.setVertexBuffer(1, checker.normBuf);
     pass.setVertexBuffer(2, buffers.instanceBuf);
     pass.setIndexBuffer(checker.idxBuf, checker.indexFormat || 'uint32');
-
-    // drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
     pass.drawIndexed(checker.indexCount, instanceManager.checkerCount, 0, 0, instanceManager.firstCheckerIndex);
 
-    // restore cube buffers for remaining draws
+    // restore cube buffers
     pass.setVertexBuffer(0, buffers.posBuf);
     pass.setVertexBuffer(1, buffers.normBuf);
     pass.setVertexBuffer(2, buffers.instanceBuf);
@@ -107,10 +104,8 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
   const startRemaining = (instanceManager.firstCheckerIndex || 0) + (instanceManager.checkerCount || 0);
   const remainingCount = Math.max(0, (instanceManager.instanceCount || 0) - startRemaining);
 
-  // draw crowns first (cylinders) if present in the remaining region
+  // draw crowns first (cylinders)
   if (instanceManager.crownCount > 0 && buffers.cylinderIdxBuf) {
-    try { console.debug('renderPass: drawing crowns', { firstCrownIndex: instanceManager.firstCrownIndex, crownCount: instanceManager.crownCount, cylinderIndexCount: buffers.cylinderIndexCount }); } catch (e) { }
-    // draw crowns with the normal pipeline (culling enabled) to avoid device instability
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, uniformBindGroup);
     pass.setVertexBuffer(0, buffers.cylinderPosBuf);
@@ -119,7 +114,7 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     pass.setIndexBuffer(buffers.cylinderIdxBuf, 'uint16');
     pass.drawIndexed(buffers.cylinderIndexCount, instanceManager.crownCount, 0, 0, instanceManager.firstCrownIndex);
 
-    // restore main pipeline and cube buffers for the remainder
+    // restore main pipeline and cube buffers
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, uniformBindGroup);
     pass.setVertexBuffer(0, buffers.posBuf);
@@ -128,14 +123,11 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     pass.setIndexBuffer(buffers.idxBuf, 'uint16');
   }
 
-  // draw the rest of remaining instances (skip crowns which were already drawn)
+  // draw the rest of remaining instances
   if (remainingCount > 0) {
-    // startRemaining is the offset into the instance buffer where remaining instances begin
-    // subtract crowns that we already drew from that pool
     const remainingAfterCrowns = Math.max(0, remainingCount - (instanceManager.crownCount || 0));
     const startOffset = startRemaining + (instanceManager.crownCount || 0);
     if (remainingAfterCrowns > 0) {
-      try { console.debug('renderPass: drawing remaining cubes', { startOffset, remainingAfterCrowns }); } catch (e) { }
       pass.drawIndexed(36, remainingAfterCrowns, 0, 0, startOffset);
     }
   }
