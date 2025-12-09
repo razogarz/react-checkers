@@ -68,7 +68,6 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
   const contentType = res.headers.get('content-type') || '(unknown)';
   let ab = await res.arrayBuffer();
-  try { console.debug('loadCheckerModel: fetched', { url, contentType, size: ab.byteLength }); } catch (e) { }
 
   let view = new DataView(ab);
   // header — check for GLB magic
@@ -130,15 +129,9 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
             try {
               const base = new URL(url, location.href);
               const bufUrl = new URL(json.buffers[0].uri, base).toString();
-              // attempt fetching the external buffer
-              try {
-                const binRes = await fetch(bufUrl);
-                if (binRes.ok) binBuffer = await binRes.arrayBuffer();
-                else console.warn('loadCheckerModel: external buffer fetch failed', { bufUrl, status: binRes.status });
-              } catch (e) { console.warn('loadCheckerModel: error fetching external buffer', e); }
-            } catch (e) {
-              console.warn('loadCheckerModel: failed to resolve external buffer URI', e);
-            }
+              const binRes = await fetch(bufUrl);
+              if (binRes.ok) binBuffer = await binRes.arrayBuffer();
+            } catch (e) { console.warn('loadCheckerModel: error fetching external buffer', e); }
           }
         }
       }
@@ -148,8 +141,6 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
 
     if (!json) throw new Error('Not a GLB file');
   }
-
-  // json and binBuffer are prepared above (either from binary GLB or embedded/external glTF)
 
   if (!json.meshes || json.meshes.length === 0) throw new Error('GLTF has no meshes');
   const mesh = json.meshes[0];
@@ -296,11 +287,75 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
   bounds.center = [(bounds.min[0] + bounds.max[0]) / 2, (bounds.min[1] + bounds.max[1]) / 2, (bounds.min[2] + bounds.max[2]) / 2];
 
   // Assign to variables expected by rest of function
-  const pos = posAll;
-  const norm = normAll;
-  const uvs = uvAll;
-  const tan = tanAll;
-  const indices = idxAll;
+  const posMerged = posAll;
+  const uvsMerged = uvAll;
+  const tanMerged = tanAll;
+  const indicesMerged = idxAll;
+
+  // --- HARDENING STEP: Un-index and generate flat normals ---
+  // This converts smooth-shaded geometry into flat-shaded (low poly look)
+  // to fix the "blood cell" / "smoothed out" appearance of the checkers.
+  const idxCount = indicesMerged.length;
+  const flatPos = new Float32Array(idxCount * 3);
+  const flatNorm = new Float32Array(idxCount * 3);
+  const flatUV = new Float32Array(idxCount * 2);
+  const flatTan = new Float32Array(idxCount * 4);
+  const flatIdx = new Uint32Array(idxCount);
+
+  for (let i = 0; i < idxCount; i += 3) {
+    const i0 = indicesMerged[i], i1 = indicesMerged[i + 1], i2 = indicesMerged[i + 2];
+
+    // Vertices
+    const p0x = posMerged[i0 * 3], p0y = posMerged[i0 * 3 + 1], p0z = posMerged[i0 * 3 + 2];
+    const p1x = posMerged[i1 * 3], p1y = posMerged[i1 * 3 + 1], p1z = posMerged[i1 * 3 + 2];
+    const p2x = posMerged[i2 * 3], p2y = posMerged[i2 * 3 + 1], p2z = posMerged[i2 * 3 + 2];
+
+    // Face Normal
+    const ax = p1x - p0x, ay = p1y - p0y, az = p1z - p0z;
+    const bx = p2x - p0x, by = p2y - p0y, bz = p2z - p0z;
+    let nx = ay * bz - az * by;
+    let ny = az * bx - ax * bz;
+    let nz = ax * by - ay * bx;
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+
+    for (let k = 0; k < 3; k++) {
+      const originalIdx = [i0, i1, i2][k];
+      const newIdx = i + k;
+
+      // Position
+      flatPos[newIdx * 3 + 0] = [p0x, p1x, p2x][k];
+      flatPos[newIdx * 3 + 1] = [p0y, p1y, p2y][k];
+      flatPos[newIdx * 3 + 2] = [p0z, p1z, p2z][k];
+
+      // Normal
+      flatNorm[newIdx * 3 + 0] = nx;
+      flatNorm[newIdx * 3 + 1] = ny;
+      flatNorm[newIdx * 3 + 2] = nz;
+
+      // UV
+      if (uvsMerged) {
+        flatUV[newIdx * 2 + 0] = uvsMerged[originalIdx * 2 + 0];
+        flatUV[newIdx * 2 + 1] = uvsMerged[originalIdx * 2 + 1];
+      }
+
+      // Tangent
+      if (tanMerged) {
+        flatTan[newIdx * 4 + 0] = tanMerged[originalIdx * 4 + 0];
+        flatTan[newIdx * 4 + 1] = tanMerged[originalIdx * 4 + 1];
+        flatTan[newIdx * 4 + 2] = tanMerged[originalIdx * 4 + 2];
+        flatTan[newIdx * 4 + 3] = tanMerged[originalIdx * 4 + 3];
+      }
+
+      flatIdx[newIdx] = newIdx;
+    }
+  }
+
+  const pos = flatPos;
+  const norm = flatNorm;
+  const uvs = flatUV;
+  const tan = flatTan;
+  const indices = flatIdx;
 
   // create GPU buffers
   function createGPUBuffer(arr, usage) {
@@ -393,12 +448,7 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
 
         const blob = await getImageBlob();
         if (!blob) return null;
-        try {
-          return await createImageBitmap(blob);
-        } catch (e) {
-          console.warn('loadCheckerModel: createImageBitmap failed', e);
-          return null;
-        }
+        return await createImageBitmap(blob);
       }
 
       // Load all textures in parallel

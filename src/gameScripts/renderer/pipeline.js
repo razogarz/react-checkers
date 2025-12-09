@@ -138,9 +138,8 @@ export async function createPipeline(device, format, uniformBuffer) {
   });
 
 
-  try {
-    console.debug('createPipeline: main pipeline created', { format });
-  } catch (e) { }
+  // console.debug('createPipeline: main pipeline created', { format });
+
 
   return { pipeline, uniformBindGroup };
 }
