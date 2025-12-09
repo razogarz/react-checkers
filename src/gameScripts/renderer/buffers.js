@@ -1,6 +1,7 @@
 import { INSTANCE_SIZE } from '../constants/constants.js';
 import { cubeGeometry } from '../constants/geometry.js';
 import { sphereGeometry } from '../constants/sphereGeometry.js';
+import { cylinderGeometry } from '../constants/cylinderGeometry.js';
 
 /**
  * createBuffers — allocate GPU buffers for the cube geometry and instances.
@@ -45,6 +46,25 @@ export function createBuffers(device, initialMaxInstances = 200) {
   });
   device.queue.writeBuffer(skyIdxBuf, 0, sphereGeometry.indices);
 
+  // cylinder geometry buffers (for crown markers)
+  const cylinderPosBuf = device.createBuffer({
+    size: cylinderGeometry.positions.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(cylinderPosBuf, 0, cylinderGeometry.positions);
+
+  const cylinderNormBuf = device.createBuffer({
+    size: cylinderGeometry.normals.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(cylinderNormBuf, 0, cylinderGeometry.normals);
+
+  const cylinderIdxBuf = device.createBuffer({
+    size: cylinderGeometry.indices.byteLength,
+    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(cylinderIdxBuf, 0, cylinderGeometry.indices);
+
   let maxInstances = initialMaxInstances;
   let instanceBuf = device.createBuffer({
     size: maxInstances * INSTANCE_SIZE,
@@ -83,6 +103,8 @@ export function createBuffers(device, initialMaxInstances = 200) {
     posBuf, normBuf, idxBuf,
     // sky resources
     skyPosBuf, skyUvBuf, skyIdxBuf, skyIndexCount: sphereGeometry.indices.length,
+    // cylinder (crown) resources
+    cylinderPosBuf, cylinderNormBuf, cylinderIdxBuf, cylinderIndexCount: cylinderGeometry.indices.length,
     get instanceBuf() { return instanceBuf; },
     uniformBuffer,
     skyUniformBuffer,

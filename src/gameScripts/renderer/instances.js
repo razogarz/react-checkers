@@ -18,6 +18,8 @@ export default class InstanceManager {
     this.cubeCount = 0;            // number of board square instances (drawn with cube geometry)
     this.firstCheckerIndex = 0;    // start index for checker piece instances
     this.checkerCount = 0;         // number of checker piece instances
+    this.firstCrownIndex = 0;      // start index for crown instances (within remaining region)
+    this.crownCount = 0;           // number of crown instances
   }
 
   /**
@@ -159,6 +161,9 @@ export default class InstanceManager {
     this.checkerCount = piecesAdded;
 
     // --- second pass: add crowns, must-attack markers and other extras so they are drawn in the remaining instances ---
+    // record start of crowns so we can draw them separately (cylinders)
+    this.firstCrownIndex = this.instances.length;
+    this.crownCount = 0;
     // iterate pieces again to add crowns and must-attack markers in the remaining instance region
     for (let y2 = 0; y2 < 8; y2++) {
       for (let x2 = 0; x2 < 8; x2++) {
@@ -172,8 +177,13 @@ export default class InstanceManager {
         const pz2 = (y2 - 3.5) * 1.0;
 
         if (isKing2) {
-          const crownModel = this.createModelMatrix(px2, BOARD_Y + h2 + 0.1, pz2, 0.5, 0.15, 0.5);
+          // place crown slightly above the piece surface so it is visible but low-profile
+          // h2 is the approximate piece height, so sit the crown on top with a small offset
+          const crownModel = this.createModelMatrix(px2, BOARD_Y + h2 + 0.02, pz2, 0.5, 0.08, 0.5);
           this.pushInstance(crownModel, COLORS.KING_CROWN);
+          // debug log to help track crown insertion and ranges
+          try { console.debug('InstanceManager: crown pushed', { x: x2, y: y2, firstCrownIndex: this.firstCrownIndex, crownCount: this.crownCount }); } catch (e) {}
+          this.crownCount++;
         }
 
         if (anyCapture) {

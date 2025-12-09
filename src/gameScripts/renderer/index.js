@@ -26,6 +26,8 @@ export default class Renderer {
 
     const p = await createPipeline(this.device, this.format, this.buffers.uniformBuffer);
     this.pipeline = p.pipeline;
+    // pipelineNoCull removed — drawing crowns with the normal culling pipeline
+    // pipelineNoCull removed; crowns will be drawn with the main pipeline
     this.uniformBindGroup = p.uniformBindGroup;
 
     // Create instance manager before performing any async work (prevents races)
@@ -83,6 +85,11 @@ export default class Renderer {
       // fail gracefully: no sky
       console.warn('Sky initialization failed', e);
       this.sky = null;
+    }
+    // Add a device lost handler to capture reasons if the GPU device is lost (explains black screens)
+    if (this.device && this.device.lost) {
+      // device.lost is a promise that resolves when the device is lost; print reason
+      this.device.lost.then((info) => { console.error('WebGPU device lost:', info); }).catch((err) => { console.error('device.lost handler failed', err); });
     }
     // instanceManager already created above to avoid races
   }
