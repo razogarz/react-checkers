@@ -39,8 +39,36 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
   pass.setVertexBuffer(1, buffers.normBuf);
   pass.setVertexBuffer(2, buffers.instanceBuf);
   pass.setIndexBuffer(buffers.idxBuf, 'uint16');
-  
-  pass.drawIndexed(36, instanceManager.instanceCount, 0, 0, 0); // 36 indices for cube
+
+  // draw first batch: all board cubes
+  pass.drawIndexed(36, instanceManager.cubeCount || 0, 0, 0, 0); // 36 indices for cube
+
+  // draw GLB checker primitives (if available) using the same instance buffer
+  if (buffers.checker && instanceManager.checkerCount > 0) {
+    try { console.debug('renderPass: drawing GLB checkers', { firstCheckerIndex: instanceManager.firstCheckerIndex, checkerCount: instanceManager.checkerCount, indexCount: buffers.checker.indexCount }); } catch (e) {}
+    const checker = buffers.checker;
+    pass.setVertexBuffer(0, checker.posBuf);
+    pass.setVertexBuffer(1, checker.normBuf);
+    pass.setVertexBuffer(2, buffers.instanceBuf);
+    pass.setIndexBuffer(checker.idxBuf, checker.indexFormat || 'uint32');
+
+    // drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
+    pass.drawIndexed(checker.indexCount, instanceManager.checkerCount, 0, 0, instanceManager.firstCheckerIndex);
+
+    // restore cube buffers for remaining draws
+    pass.setVertexBuffer(0, buffers.posBuf);
+    pass.setVertexBuffer(1, buffers.normBuf);
+    pass.setVertexBuffer(2, buffers.instanceBuf);
+    pass.setIndexBuffer(buffers.idxBuf, 'uint16');
+  }
+
+  // draw remaining instances (crowns, markers, glow, valid moves)
+  const startRemaining = (instanceManager.firstCheckerIndex || 0) + (instanceManager.checkerCount || 0);
+  const remainingCount = Math.max(0, (instanceManager.instanceCount || 0) - startRemaining);
+  if (remainingCount > 0) {
+    try { console.debug('renderPass: drawing remaining cubes', { startRemaining, remainingCount }); } catch (e) {}
+    pass.drawIndexed(36, remainingCount, 0, 0, startRemaining);
+  }
 
   pass.end();
   device.queue.submit([commandEncoder.finish()]);

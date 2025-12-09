@@ -4,6 +4,7 @@ import InstanceManager from './instances.js';
 import { ensureDepthTexture } from './depth.js';
 import { updateUniforms, createSkyUniformBuffer, updateSkyUniforms } from './uniforms.js'; // Changed from updateUniformBuffer
 import { renderPass } from './renderPass.js';
+import { loadCheckerModel } from '../loader/loadCheckerGLB.js';
 
 export default class Renderer {
   constructor(device, context, canvas, format) {
@@ -33,6 +34,16 @@ export default class Renderer {
       this.buffers,
       () => this.buffers.maxInstances
     );
+
+    // Try loading checker.glb (if present). Attach GPU buffers to buffers.checker.
+    try {
+      const checker = await loadCheckerModel(this.device, '/checker.glb');
+      this.buffers.checker = checker;
+      try { console.debug('Checker GLB loaded', { indexCount: checker.indexCount, indexFormat: checker.indexFormat }); } catch (e) {}
+    } catch (e) {
+      // ignore if missing — fallback to cube-based pieces
+      console.info('No checker.glb or load failed - using cube pieces', e?.message || e);
+    }
 
     // Sky resources: load panorama texture from public and create pipeline
     this.sky = { pipeline: null, uniformBindGroup: null, texture: null, sampler: null };
