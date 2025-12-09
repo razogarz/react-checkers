@@ -27,6 +27,12 @@ export function createBuffers(device, initialMaxInstances = 200) {
   });
   device.queue.writeBuffer(idxBuf, 0, cubeGeometry.indices);
 
+  const uvBuf = device.createBuffer({
+    size: cubeGeometry.uvs.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  });
+  device.queue.writeBuffer(uvBuf, 0, cubeGeometry.uvs);
+
   // --- sky sphere buffers (separate mesh used for the sky dome) ---
   const skyPosBuf = device.createBuffer({
     size: sphereGeometry.positions.byteLength,
@@ -74,7 +80,7 @@ export function createBuffers(device, initialMaxInstances = 200) {
   // a single-instance buffer usable for drawing one-off models (like a table)
   const singleInstanceData = new Float32Array(21);
   // identity mat4
-  singleInstanceData.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], 0);
+  singleInstanceData.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 0);
   // color rgb at indices 16..18
   singleInstanceData[16] = 1.0; singleInstanceData[17] = 1.0; singleInstanceData[18] = 1.0;
   singleInstanceData[19] = 0.0; // reserved
@@ -83,7 +89,18 @@ export function createBuffers(device, initialMaxInstances = 200) {
   const singleInstanceBuf = device.createBuffer({ size: INSTANCE_SIZE, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(singleInstanceBuf, 0, singleInstanceData);
 
-  const uniformBufferSize = (16 + 4) * 4; // vp(16) + lightDir(4)
+  // a second single-instance buffer reserved for one-off draws like a ground/large cube
+  const groundInstanceData = new Float32Array(21);
+  groundInstanceData.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 0);
+  // default ground color -- a soft green (overridden from renderer when placed)
+  groundInstanceData[16] = 0.12; groundInstanceData[17] = 0.5; groundInstanceData[18] = 0.15;
+  groundInstanceData[19] = 0.0; groundInstanceData[20] = 0.0;
+  const groundInstanceBuf = device.createBuffer({ size: INSTANCE_SIZE, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(groundInstanceBuf, 0, groundInstanceData);
+
+  // Uniform buffer size: must be large enough for the largest uniform struct (PBR: 112 bytes)
+  // PBR Struct U: mat4(64) + vec4(16) + vec4(16) + vec4(16) = 112 bytes
+  const uniformBufferSize = 112;
   const uniformBuffer = device.createBuffer({
     size: uniformBufferSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -112,13 +129,14 @@ export function createBuffers(device, initialMaxInstances = 200) {
   }
 
   return {
-    posBuf, normBuf, idxBuf,
+    posBuf, normBuf, uvBuf, idxBuf,
     // sky resources
     skyPosBuf, skyUvBuf, skyIdxBuf, skyIndexCount: sphereGeometry.indices.length,
     // cylinder (crown) resources
     cylinderPosBuf, cylinderNormBuf, cylinderIdxBuf, cylinderIndexCount: cylinderGeometry.indices.length,
     get instanceBuf() { return instanceBuf; },
     singleInstanceBuf,
+    groundInstanceBuf,
     uniformBuffer,
     skyUniformBuffer,
     get maxInstances() { return maxInstances; },

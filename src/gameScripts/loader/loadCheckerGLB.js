@@ -11,21 +11,55 @@ function readUint32(dataView, offset) {
   return dataView.getUint32(offset, true);
 }
 
-function getTypedArrayForAccessor(componentType, count, accessorType, buffer, byteOffset) {
-  // Only a few combinations needed: FLOAT vec3, UNSIGNED_SHORT/UNSIGNED_INT scalar indices
-  if (componentType === 5126) { // FLOAT
-    // 'VEC2' -> 2, 'VEC3' -> 3, 'VEC4' -> 4
-    const comps = accessorType === 'VEC2' ? 2 : accessorType === 'VEC4' ? 4 : 3;
-    return new Float32Array(buffer, byteOffset, count * comps);
+function getTypedArrayForAccessor(componentType, count, accessorType, buffer, byteOffset, byteStride) {
+  // Determine element size in bytes
+  const isFloat = componentType === 5126;
+  const isUShort = componentType === 5123;
+  const isUInt = componentType === 5125;
+
+  let numComponents = 1;
+  if (accessorType === 'VEC2') numComponents = 2;
+  else if (accessorType === 'VEC3') numComponents = 3;
+  else if (accessorType === 'VEC4') numComponents = 4;
+  else if (accessorType === 'MAT4') numComponents = 16;
+
+  const bytesPerComponent = isFloat || isUInt ? 4 : (isUShort ? 2 : 1);
+  const elementSize = numComponents * bytesPerComponent;
+
+  // effective stride is either explicit byteStride or tightly packed elementSize
+  const stride = (byteStride && byteStride > 0) ? byteStride : elementSize;
+
+  // Fast path: tightly packed (stride == elementSize)
+  if (stride === elementSize) {
+    if (isFloat) return new Float32Array(buffer, byteOffset, count * numComponents);
+    if (isUShort) return new Uint16Array(buffer, byteOffset, count * numComponents);
+    if (isUInt) return new Uint32Array(buffer, byteOffset, count * numComponents);
+    return new Uint8Array(buffer, byteOffset, count * numComponents);
   }
-  if (componentType === 5123) { // UNSIGNED_SHORT
-    return new Uint16Array(buffer, byteOffset, count);
+
+  // Slow path: interleaved/strided data - must copy to a new dense array
+  // We'll create a new TypedArray of the correct size and copy elements one by one
+  let target;
+  if (isFloat) target = new Float32Array(count * numComponents);
+  else if (isUShort) target = new Uint16Array(count * numComponents);
+  else if (isUInt) target = new Uint32Array(count * numComponents);
+  else target = new Uint8Array(count * numComponents);
+
+  const dataView = new DataView(buffer);
+  let readOffset = byteOffset;
+
+  for (let i = 0; i < count; i++) {
+    for (let j = 0; j < numComponents; j++) {
+      const valOffset = readOffset + j * bytesPerComponent;
+      if (isFloat) target[i * numComponents + j] = dataView.getFloat32(valOffset, true);
+      else if (isUShort) target[i * numComponents + j] = dataView.getUint16(valOffset, true);
+      else if (isUInt) target[i * numComponents + j] = dataView.getUint32(valOffset, true);
+      else target[i * numComponents + j] = dataView.getUint8(valOffset);
+    }
+    readOffset += stride;
   }
-  if (componentType === 5125) { // UNSIGNED_INT
-    return new Uint32Array(buffer, byteOffset, count);
-  }
-  // fallback - return raw Uint8Array
-  return new Uint8Array(buffer, byteOffset, count);
+
+  return target;
 }
 
 export async function loadCheckerModel(device, url = '/checker.glb') {
@@ -34,7 +68,7 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
   const contentType = res.headers.get('content-type') || '(unknown)';
   let ab = await res.arrayBuffer();
-  try { console.debug('loadCheckerModel: fetched', { url, contentType, size: ab.byteLength }); } catch (e) {}
+  try { console.debug('loadCheckerModel: fetched', { url, contentType, size: ab.byteLength }); } catch (e) { }
 
   let view = new DataView(ab);
   // header — check for GLB magic
@@ -120,72 +154,153 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
   if (!json.meshes || json.meshes.length === 0) throw new Error('GLTF has no meshes');
   const mesh = json.meshes[0];
   if (!mesh.primitives || mesh.primitives.length === 0) throw new Error('mesh has no primitives');
-  const prim = mesh.primitives[0];
 
-  // need accessors, bufferViews
   const accessors = json.accessors || [];
   const bufferViews = json.bufferViews || [];
 
-  function readAccessor(name) {
-    const attrIndex = prim.attributes[name];
-    if (attrIndex === undefined) return null;
-    const accessor = accessors[attrIndex];
+  // Helper to read accessor data
+  function readAccessorData(accessorIndex) {
+    if (accessorIndex === undefined) return null;
+    const accessor = accessors[accessorIndex];
     if (!accessor) return null;
     const bv = bufferViews[accessor.bufferView];
     const byteOffset = (bv.byteOffset || 0) + (accessor.byteOffset || 0);
-    return getTypedArrayForAccessor(accessor.componentType, accessor.count, accessor.type, binBuffer, byteOffset);
+    return getTypedArrayForAccessor(accessor.componentType, accessor.count, accessor.type, binBuffer, byteOffset, bv.byteStride);
   }
 
-  const pos = readAccessor('POSITION');
-  const norm = readAccessor('NORMAL');
-  // try reading texture coordinates (optional)
-  const uvs = readAccessor('TEXCOORD_0');
-  const idxAccessorIndex = prim.indices;
-  let indices = null;
-  if (typeof idxAccessorIndex === 'number') {
-    const idxAcc = accessors[idxAccessorIndex];
-    const bv = bufferViews[idxAcc.bufferView];
-    const byteOffset = (bv.byteOffset || 0) + (idxAcc.byteOffset || 0);
-    indices = getTypedArrayForAccessor(idxAcc.componentType, idxAcc.count, idxAcc.type, binBuffer, byteOffset);
-  }
+  // helper to normalize integer data if needed
+  const normalizeIfNeeded = (data, accessorIndex) => {
+    if (!data || data instanceof Float32Array) return data;
 
-  if (!pos || !indices) throw new Error('checker.glb missing POSITION or indices');
+    const accessor = accessors[accessorIndex];
+    if (!accessor) return data; // Should not happen if data is not null
 
-  // compute bounds
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (let i = 0; i < pos.length; i += 3) {
-    const x = pos[i], y = pos[i+1], z = pos[i+2];
-    if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
-    if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
-  }
-  const bounds = { min: [minX, minY, minZ], max: [maxX, maxY, maxZ], size: [maxX-minX, maxY-minY, maxZ-minZ], center: [(minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2] };
+    // If the accessor explicitly says it's normalized, or if it's a common attribute like UV/Normal
+    // that we expect as floats, convert it.
+    const shouldNormalize = accessor.normalized || ['TEXCOORD_0', 'NORMAL', 'TANGENT'].includes(accessor.name);
 
-  // If model lacks TEXCOORD_0 but has positions, generate a simple planar UV set mapped using X/Z bounds.
-  let generatedUVs = null;
-  if (!uvs && pos && pos.length >= 3) {
-    try {
-      const vertCount = pos.length / 3;
-      const minXv = bounds.min[0], maxXv = bounds.max[0];
-      const minZv = bounds.min[2], maxZv = bounds.max[2];
-      const sizeX = (maxXv - minXv) || 1.0;
-      const sizeZ = (maxZv - minZv) || 1.0;
-      generatedUVs = new Float32Array(vertCount * 2);
-      for (let i = 0; i < vertCount; i++) {
-        const x = pos[i*3 + 0];
-        const z = pos[i*3 + 2];
-        const u = (x - minXv) / sizeX;
-        const v = (z - minZv) / sizeZ;
-        generatedUVs[i*2 + 0] = u;
-        generatedUVs[i*2 + 1] = v;
-      }
-      // don't override existing uvs; generatedUVs will be used when creating GPU buffer
-      console.debug('loadCheckerModel: generated planar UVs for model (fallback)');
-    } catch (e) {
-      console.warn('loadCheckerModel: failed to generate fallback UVs', e);
-      generatedUVs = null;
+    if (!shouldNormalize) return data; // No normalization needed
+
+    const result = new Float32Array(data.length);
+    let divisor = 1.0;
+    switch (accessor.componentType) {
+      case 5123: // USHORT
+        divisor = 65535.0;
+        break;
+      case 5121: // UBYTE
+        divisor = 255.0;
+        break;
+      case 5122: // SHORT
+        divisor = 32767.0;
+        break;
+      case 5120: // BYTE
+        divisor = 127.0;
+        break;
+      default:
+        // For other types, no normalization needed or handled by getTypedArrayForAccessor
+        return data;
     }
+
+    for (let i = 0; i < data.length; i++) {
+      result[i] = data[i] / divisor;
+    }
+    return result;
+  };
+
+  // 1. Calculate total size
+  let totalVerts = 0;
+  let totalIndices = 0;
+  for (const prim of mesh.primitives) {
+    const posAcc = accessors[prim.attributes.POSITION];
+    if (posAcc) totalVerts += posAcc.count;
+    const idxAcc = (prim.indices !== undefined) ? accessors[prim.indices] : null;
+    if (idxAcc) totalIndices += idxAcc.count;
   }
+
+  // 2. Allocate unified arrays
+  const posAll = new Float32Array(totalVerts * 3);
+  const normAll = new Float32Array(totalVerts * 3);
+  const uvAll = new Float32Array(totalVerts * 2);
+  const tanAll = new Float32Array(totalVerts * 4);
+  const idxAll = new Uint32Array(totalIndices);
+
+  let vOffset = 0;
+  let iOffset = 0;
+  let bounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+
+  // 3. Merge primitives
+  for (const prim of mesh.primitives) {
+    const posRaw = readAccessorData(prim.attributes.POSITION);
+    const normRaw = readAccessorData(prim.attributes.NORMAL);
+    const uvRaw = readAccessorData(prim.attributes.TEXCOORD_0);
+    const tanRaw = readAccessorData(prim.attributes.TANGENT);
+
+    const posF = posRaw; // POSITION is always float or normalized int that getTypedArrayForAccessor handles
+    const normF = normalizeIfNeeded(normRaw, prim.attributes.NORMAL);
+    const uvF = normalizeIfNeeded(uvRaw, prim.attributes.TEXCOORD_0);
+    const tanF = normalizeIfNeeded(tanRaw, prim.attributes.TANGENT);
+
+    const primVertCount = posF ? (posF.length / 3) : 0;
+    if (primVertCount === 0) continue; // Skip primitives without positions
+
+    // Copy vertices
+    posAll.set(posF, vOffset * 3);
+
+    if (normF) {
+      normAll.set(normF, vOffset * 3);
+    } else {
+      // Fill with default normal (e.g., [0,1,0]) if not present
+      for (let k = 0; k < primVertCount; k++) {
+        normAll[(vOffset + k) * 3 + 1] = 1.0; // Y-up default
+      }
+    }
+
+    if (uvF) {
+      uvAll.set(uvF, vOffset * 2);
+    } // else: uvAll remains 0s for this section
+
+    if (tanF) {
+      tanAll.set(tanF, vOffset * 4);
+    } else {
+      // if no tangent, generate dummy [1,0,0,1] for this chunk
+      for (let k = 0; k < primVertCount; k++) {
+        tanAll[(vOffset + k) * 4 + 0] = 1.0; // X-axis tangent
+        tanAll[(vOffset + k) * 4 + 3] = 1.0; // W component for handedness
+      }
+    }
+
+    // Update bounds
+    for (let i = 0; i < posF.length; i += 3) {
+      const x = posF[i], y = posF[i + 1], z = posF[i + 2];
+      if (x < bounds.min[0]) bounds.min[0] = x;
+      if (x > bounds.max[0]) bounds.max[0] = x;
+      if (y < bounds.min[1]) bounds.min[1] = y;
+      if (y > bounds.max[1]) bounds.max[1] = y;
+      if (z < bounds.min[2]) bounds.min[2] = z;
+      if (z > bounds.max[2]) bounds.max[2] = z;
+    }
+
+    // Copy indices with offset
+    if (prim.indices !== undefined) {
+      const idx = readAccessorData(prim.indices);
+      for (let k = 0; k < idx.length; k++) {
+        idxAll[iOffset + k] = idx[k] + vOffset;
+      }
+      iOffset += idx.length;
+    }
+
+    vOffset += primVertCount;
+  }
+
+  bounds.size = [bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]];
+  bounds.center = [(bounds.min[0] + bounds.max[0]) / 2, (bounds.min[1] + bounds.max[1]) / 2, (bounds.min[2] + bounds.max[2]) / 2];
+
+  // Assign to variables expected by rest of function
+  const pos = posAll;
+  const norm = normAll;
+  const uvs = uvAll;
+  const tan = tanAll;
+  const indices = idxAll;
 
   // create GPU buffers
   function createGPUBuffer(arr, usage) {
@@ -198,97 +313,113 @@ export async function loadCheckerModel(device, url = '/checker.glb') {
 
   const posBuf = createGPUBuffer(new Float32Array(pos.buffer ? pos.buffer : pos), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
   const normBuf = norm ? createGPUBuffer(new Float32Array(norm.buffer ? norm.buffer : norm), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST) : null;
+  const tanBuf = tan ? createGPUBuffer(new Float32Array(tan.buffer ? tan.buffer : tan), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST) : null;
   const uvSource = uvs ? uvs : generatedUVs;
   const uvBuf = uvSource ? createGPUBuffer(new Float32Array(uvSource.buffer ? uvSource.buffer : uvSource), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST) : null;
   const idxBuf = createGPUBuffer(indices, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST);
 
   const indexFormat = indices instanceof Uint16Array ? 'uint16' : 'uint32';
 
-  // Attempt to resolve a material texture (if the model has one) and produce an ImageBitmap
-  async function resolveImageForPrimitive() {
+  async function resolveMaterial() {
     try {
-      if (!prim.material || !json.materials || !json.textures || !json.images) return null;
-      const mat = json.materials[prim.material];
-      if (!mat) return null;
+      const emptyMat = { baseColor: null, normal: null, orm: null, emissive: null, factors: { baseColor: [1, 1, 1, 1], metallic: 1, roughness: 1 } };
 
-      // pbrMetallicRoughness.baseColorTexture is the common place for albedo/texture
-      const texInfo = mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture;
-      if (!texInfo || typeof texInfo.index !== 'number') return null;
+      // We merged all primitives, so we assume they share the same material (or we just use the first one).
+      const firstPrim = mesh.primitives[0];
+      if (firstPrim.material === undefined) return emptyMat;
 
-      const tex = json.textures[texInfo.index];
-      if (!tex || typeof tex.source !== 'number') return null;
+      if (!json.materials) return emptyMat;
+      const mat = json.materials[firstPrim.material];
+      if (!mat) return emptyMat;
 
-      const imgDef = json.images[tex.source];
-      if (!imgDef) return null;
+      // Extract Factors
+      const factors = {
+        baseColor: mat.pbrMetallicRoughness?.baseColorFactor || [1, 1, 1, 1],
+        metallic: mat.pbrMetallicRoughness?.metallicFactor !== undefined ? mat.pbrMetallicRoughness.metallicFactor : 1.0,
+        roughness: mat.pbrMetallicRoughness?.roughnessFactor !== undefined ? mat.pbrMetallicRoughness.roughnessFactor : 1.0,
+      };
 
-      // helper: get bytes either from bufferView (GLB) or data: uri or external uri
-      async function getImageBlob() {
-        if (imgDef.bufferView !== undefined) {
-          const bv = bufferViews[imgDef.bufferView];
-          if (!bv) return null;
-          const bOffset = bv.byteOffset || 0;
-          const bLength = bv.byteLength || 0;
-          if (!binBuffer) return null;
-          const bytes = new Uint8Array(binBuffer, bOffset, bLength);
-          const mime = imgDef.mimeType || 'image/png';
-          return new Blob([bytes], { type: mime });
-        }
+      // Helper to load a texture by generic texture info object
+      async function loadTex(texInfo) {
+        if (!texInfo || typeof texInfo.index !== 'number') return null;
+        const tex = json.textures ? json.textures[texInfo.index] : null;
+        if (!tex || typeof tex.source !== 'number') return null;
+        const imgDef = json.images ? json.images[tex.source] : null;
+        if (!imgDef) return null;
 
-        if (imgDef.uri && typeof imgDef.uri === 'string') {
-          // data: URIs
-          if (imgDef.uri.startsWith('data:')) {
-            const comma = imgDef.uri.indexOf(',');
-            if (comma < 0) return null;
-            const meta = imgDef.uri.substring(5, comma);
-            const isBase64 = meta.includes('base64');
-            const b64 = imgDef.uri.substring(comma + 1);
-            if (isBase64) {
-              const binStr = atob(b64);
-              const buf = new Uint8Array(binStr.length);
-              for (let i = 0; i < binStr.length; i++) buf[i] = binStr.charCodeAt(i);
-              const mime = meta.split(';')[0] || 'image/png';
-              return new Blob([buf], { type: mime });
+        // helper: get bytes either from bufferView (GLB) or data: uri or external uri
+        async function getImageBlob() {
+          if (imgDef.bufferView !== undefined) {
+            const bv = bufferViews[imgDef.bufferView];
+            if (!bv) return null;
+            const bOffset = bv.byteOffset || 0;
+            const bLength = bv.byteLength || 0;
+            if (!binBuffer) return null;
+            const bytes = new Uint8Array(binBuffer, bOffset, bLength);
+            const mime = imgDef.mimeType || 'image/png';
+            return new Blob([bytes], { type: mime });
+          }
+
+          if (imgDef.uri && typeof imgDef.uri === 'string') {
+            // data: URIs
+            if (imgDef.uri.startsWith('data:')) {
+              const comma = imgDef.uri.indexOf(',');
+              if (comma < 0) return null;
+              const meta = imgDef.uri.substring(5, comma);
+              const isBase64 = meta.includes('base64');
+              const b64 = imgDef.uri.substring(comma + 1);
+              if (isBase64) {
+                const binStr = atob(b64);
+                const buf = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) buf[i] = binStr.charCodeAt(i);
+                const mime = meta.split(';')[0] || 'image/png';
+                return new Blob([buf], { type: mime });
+              }
             }
-            // otherwise it's likely a plain URI string - fall through to fetching
+            // external URI
+            try {
+              const base = new URL(url, location.href);
+              const imgUrl = new URL(imgDef.uri, base).toString();
+              const r = await fetch(imgUrl);
+              if (!r.ok) return null;
+              return await r.blob();
+            } catch (e) {
+              console.warn('loadCheckerModel: failed to fetch external image', imgDef.uri, e);
+              return null;
+            }
           }
-
-          // external URI — try to fetch relative to model URL
-          try {
-            const base = new URL(url, location.href);
-            const imgUrl = new URL(imgDef.uri, base).toString();
-            const r = await fetch(imgUrl);
-            if (!r.ok) return null;
-            const b = await r.blob();
-            return b;
-          } catch (e) {
-            console.warn('loadCheckerModel: failed to fetch external image', imgDef.uri, e);
-            return null;
-          }
+          return null;
         }
 
-        return null;
+        const blob = await getImageBlob();
+        if (!blob) return null;
+        try {
+          return await createImageBitmap(blob);
+        } catch (e) {
+          console.warn('loadCheckerModel: createImageBitmap failed', e);
+          return null;
+        }
       }
 
-      const blob = await getImageBlob();
-      if (!blob) return null;
+      // Load all textures in parallel
+      const [baseColor, normal, orm, emissive] = await Promise.all([
+        loadTex(mat.pbrMetallicRoughness?.baseColorTexture),
+        loadTex(mat.normalTexture),
+        loadTex(mat.pbrMetallicRoughness?.metallicRoughnessTexture), // ORM
+        loadTex(mat.emissiveTexture)
+      ]);
 
-      // createImageBitmap is widely supported in browsers and yields a useful object for GPU uploads
-      try {
-        const bmp = await createImageBitmap(blob);
-        return bmp;
-      } catch (e) {
-        console.warn('loadCheckerModel: createImageBitmap failed', e);
-        return null;
-      }
+      return { baseColor, normal, orm, emissive, factors };
+
     } catch (e) {
-      console.warn('loadCheckerModel: failed to resolve image for primitive', e);
-      return null;
+      console.warn('loadCheckerGLB: failed to resolve material', e);
+      return { baseColor: null, normal: null, orm: null, emissive: null, factors: { baseColor: [1, 1, 1, 1], metallic: 1, roughness: 1 } };
     }
   }
 
-  const imageBitmap = await resolveImageForPrimitive();
+  const material = await resolveMaterial();
 
-  return { posBuf, normBuf, uvBuf, idxBuf, indexFormat, indexCount: indices.length, bounds, imageBitmap };
+  return { posBuf, normBuf, tanBuf, uvBuf, idxBuf, indexFormat, indexCount: indices.length, bounds, material };
 }
 
 export default loadCheckerModel;

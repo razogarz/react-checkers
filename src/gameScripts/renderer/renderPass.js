@@ -3,7 +3,7 @@
  * Binds vertex/index/instance buffers, sets pipeline & bind groups and draws
  * the configured cube mesh using instanced rendering from instanceManager.
  */
-export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager, sky, tablePipeline, tableBindGroup) {
+export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager, sky, tablePipeline, tableBindGroup, groundPipeline, groundBindGroup) {
   const commandEncoder = device.createCommandEncoder();
   const textureView = context.getCurrentTexture().createView();
 
@@ -28,7 +28,7 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     // avoid throwing further; return early so we do not submit a broken command
     return;
   }
-  
+
 
   // Draw sky dome first if available
   if (sky && sky.pipeline) {
@@ -40,28 +40,29 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     pass.drawIndexed(buffers.skyIndexCount, 1, 0, 0, 0);
   }
 
-  // draw table model (single-instance GLB) under the board if available
+  // draw table
   if (buffers.table) {
-    try { console.debug('renderPass: drawing table', { indexCount: buffers.table.indexCount, indexFormat: buffers.table.indexFormat, bounds: buffers.table.bounds }); } catch (e) {}
-    // choose textured pipeline+bindGroup if provided (texture present), otherwise fall back to main pipeline
+    // PBR / Textured table path
     if (tablePipeline && tableBindGroup) {
       pass.setPipeline(tablePipeline);
       pass.setBindGroup(0, tableBindGroup);
       pass.setVertexBuffer(0, buffers.table.posBuf);
       if (buffers.table.normBuf) pass.setVertexBuffer(1, buffers.table.normBuf);
       if (buffers.table.uvBuf) pass.setVertexBuffer(2, buffers.table.uvBuf);
-      // instance data for textured pipeline is at buffer slot 3
-      if (buffers.singleInstanceBuf) pass.setVertexBuffer(3, buffers.singleInstanceBuf);
+      if (buffers.table.tanBuf) pass.setVertexBuffer(3, buffers.table.tanBuf);
+      if (buffers.singleInstanceBuf) pass.setVertexBuffer(4, buffers.singleInstanceBuf);
     } else {
+      // Fallback simple color path
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, uniformBindGroup);
       pass.setVertexBuffer(0, buffers.table.posBuf);
       if (buffers.table.normBuf) pass.setVertexBuffer(1, buffers.table.normBuf);
-      // use the singleInstanceBuf for a single identity instance (main pipeline expects instance buffer at slot 2)
       if (buffers.singleInstanceBuf) pass.setVertexBuffer(2, buffers.singleInstanceBuf);
     }
     pass.setIndexBuffer(buffers.table.idxBuf, buffers.table.indexFormat || 'uint32');
     pass.drawIndexed(buffers.table.indexCount, 1, 0, 0, 0);
+
+    // Checkers and crowns... (rest of function)
 
     // restore cube buffers
     pass.setPipeline(pipeline);
@@ -85,7 +86,7 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
 
   // draw GLB checker primitives (if available) using the same instance buffer
   if (buffers.checker && instanceManager.checkerCount > 0) {
-    try { console.debug('renderPass: drawing GLB checkers', { firstCheckerIndex: instanceManager.firstCheckerIndex, checkerCount: instanceManager.checkerCount, indexCount: buffers.checker.indexCount }); } catch (e) {}
+    try { console.debug('renderPass: drawing GLB checkers', { firstCheckerIndex: instanceManager.firstCheckerIndex, checkerCount: instanceManager.checkerCount, indexCount: buffers.checker.indexCount }); } catch (e) { }
     const checker = buffers.checker;
     pass.setVertexBuffer(0, checker.posBuf);
     pass.setVertexBuffer(1, checker.normBuf);
@@ -108,7 +109,7 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
 
   // draw crowns first (cylinders) if present in the remaining region
   if (instanceManager.crownCount > 0 && buffers.cylinderIdxBuf) {
-    try { console.debug('renderPass: drawing crowns', { firstCrownIndex: instanceManager.firstCrownIndex, crownCount: instanceManager.crownCount, cylinderIndexCount: buffers.cylinderIndexCount }); } catch (e) {}
+    try { console.debug('renderPass: drawing crowns', { firstCrownIndex: instanceManager.firstCrownIndex, crownCount: instanceManager.crownCount, cylinderIndexCount: buffers.cylinderIndexCount }); } catch (e) { }
     // draw crowns with the normal pipeline (culling enabled) to avoid device instability
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, uniformBindGroup);
@@ -134,9 +135,32 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     const remainingAfterCrowns = Math.max(0, remainingCount - (instanceManager.crownCount || 0));
     const startOffset = startRemaining + (instanceManager.crownCount || 0);
     if (remainingAfterCrowns > 0) {
-      try { console.debug('renderPass: drawing remaining cubes', { startOffset, remainingAfterCrowns }); } catch (e) {}
+      try { console.debug('renderPass: drawing remaining cubes', { startOffset, remainingAfterCrowns }); } catch (e) { }
       pass.drawIndexed(36, remainingAfterCrowns, 0, 0, startOffset);
     }
+  }
+
+  // draw ground instance (simple green cube)
+  // draw ground instance (simple green cube or textured grass)
+  if (buffers.groundInstanceBuf) {
+    if (groundPipeline && groundBindGroup && buffers.uvBuf) {
+      pass.setPipeline(groundPipeline);
+      pass.setBindGroup(0, groundBindGroup);
+      pass.setVertexBuffer(0, buffers.posBuf);
+      pass.setVertexBuffer(1, buffers.normBuf);
+      pass.setVertexBuffer(2, buffers.uvBuf); // UVs at slot 2 for textured shader
+      // ground instance is at slot 3 for textured shader (instance matrix)
+      pass.setVertexBuffer(3, buffers.groundInstanceBuf);
+    } else {
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, uniformBindGroup);
+      pass.setVertexBuffer(0, buffers.posBuf);
+      pass.setVertexBuffer(1, buffers.normBuf);
+      // ground instance is at slot 2 (instance buffer) for color shader
+      pass.setVertexBuffer(2, buffers.groundInstanceBuf);
+    }
+    pass.setIndexBuffer(buffers.idxBuf, 'uint16');
+    pass.drawIndexed(36, 1, 0, 0, 0);
   }
 
   try {

@@ -39,5 +39,18 @@ export const cubeGeometry = {
     12, 13, 14, 12, 14, 15,
     16, 17, 18, 16, 18, 19,
     20, 21, 22, 20, 22, 23
+  ]),
+
+  /**
+   * uvs — texture coordinates (u,v) for each vertex.
+   * Maps 0..1 across each face.
+   */
+  uvs: new Float32Array([
+    0, 1, 1, 1, 1, 0, 0, 0, // front
+    0, 1, 1, 1, 1, 0, 0, 0, // back
+    0, 0, 0, 1, 1, 1, 1, 0, // top
+    0, 0, 0, 1, 1, 1, 1, 0, // bottom
+    0, 1, 1, 1, 1, 0, 0, 0, // right
+    0, 1, 1, 1, 1, 0, 0, 0  // left
   ])
 };
