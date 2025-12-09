@@ -1,7 +1,9 @@
 import { createBuffers } from './buffers.js';
-import { createPipeline, createSkyPipeline } from './pipeline.js';
+import { createPipeline, createSkyPipeline, createTexturedPipeline } from './pipeline.js';
 import InstanceManager from './instances.js';
+import { mat4 } from 'gl-matrix';
 import { ensureDepthTexture } from './depth.js';
+import { BOARD_Y, COLORS } from '../constants/constants.js';
 import { updateUniforms, createSkyUniformBuffer, updateSkyUniforms } from './uniforms.js'; // Changed from updateUniformBuffer
 import { renderPass } from './renderPass.js';
 import { loadCheckerModel } from '../loader/loadCheckerGLB.js';
@@ -45,6 +47,93 @@ export default class Renderer {
     } catch (e) {
       // ignore if missing — fallback to cube-based pieces
       console.info('No checker.glb or load failed - using cube pieces', e?.message || e);
+    }
+
+    // Try loading a table model from a few common names (case / extension variants)
+    try {
+      const tableCandidates = ['/table.glb', '/Table.glb', '/table.gltf', '/Table.gltf'];
+      let loaded = null;
+      for (const candidate of tableCandidates) {
+        try {
+          console.debug('Renderer: trying to load table candidate', candidate);
+          const table = await loadCheckerModel(this.device, candidate);
+          loaded = { table, path: candidate };
+          break;
+        } catch (e) {
+          // not found or failed - keep trying
+          console.info('Renderer: table candidate failed', candidate, e?.message || e);
+        }
+      }
+      if (loaded) {
+        const table = loaded.table;
+        this.buffers.table = table;
+        console.debug('Renderer: loaded table from', loaded.path);
+        // Diagnostic: log whether the model provided UVs and an embedded image
+        try {
+          console.debug('Renderer: table diagnostics', {
+            hasUv: !!table.uvBuf,
+            hasNormals: !!table.normBuf,
+            indexCount: table.indexCount,
+            indexFormat: table.indexFormat,
+            bounds: table.bounds,
+            imageBitmap: table.imageBitmap ? { width: table.imageBitmap.width, height: table.imageBitmap.height } : null
+          });
+        } catch (e) { console.debug('Renderer: failed to log table diagnostics', e); }
+      // compute a reasonable placement so the table sits beneath the checker board
+      try {
+        const sizes = table.bounds.size;
+        // desired footprint slightly larger than board (8 units) so table extends under it
+        const desiredFootprint = 10.0;
+        const maxAxis = Math.max(sizes[0] || 1e-6, sizes[2] || 1e-6);
+        const uniformScale = desiredFootprint / maxAxis;
+
+        // position table so its top sits slightly *above* the board surface for visibility during testing
+        // (we'll move it underneath once rendering is confirmed on user's machine)
+        // table.bounds.max[1] is the highest Y of the model in model space
+        const ty = (typeof this.buffers.table.bounds.max[1] === 'number') ? (BOARD_Y - table.bounds.max[1] * uniformScale + 0.02) : BOARD_Y + 0.04;
+
+        const m = mat4.create();
+        mat4.translate(m, m, [0.0, ty, 0.0]);
+        mat4.scale(m, m, [uniformScale, uniformScale, uniformScale]);
+
+          // write this transform + brown color into the singleInstanceBuf so table is tinted like pieces
+          // use COLORS.DARK_SQUARE to pick a warm brown
+        if (this.buffers.singleInstanceBuf) {
+          const arr = new Float32Array(21);
+          arr.set(m, 0);
+          arr[16] = (COLORS.DARK_SQUARE[0] || 0.3); arr[17] = (COLORS.DARK_SQUARE[1] || 0.2); arr[18] = (COLORS.DARK_SQUARE[2] || 0.1); arr[19] = 0.0; arr[20] = 0.0;
+          this.device.queue.writeBuffer(this.buffers.singleInstanceBuf, 0, arr);
+          try { console.debug('Renderer: wrote singleInstanceBuf for table', { ty, uniformScale, bounds: table.bounds }); } catch (e) {}
+        }
+      } catch (e) {
+        console.warn('Failed to place table automatically', e);
+      }
+        try { console.debug('Table GLB loaded', { indexCount: table.indexCount, indexFormat: table.indexFormat, bounds: table.bounds }); } catch (e) {}
+          // If the model itself contained an image for the primitive material we returned an ImageBitmap
+          // from the loader (imageBitmap). Prefer that embedded texture rather than fetching /texture/table.png.
+          try {
+            if (table.imageBitmap) {
+              const img = table.imageBitmap; // ImageBitmap
+              const tex = this.device.createTexture({ size: [img.width, img.height, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+              // copy the ImageBitmap into the GPU texture
+              this.device.queue.copyExternalImageToTexture({ source: img }, { texture: tex }, [img.width, img.height, 1]);
+              const sampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+              const texView = tex.createView();
+              const tablePipelineObj = await createTexturedPipeline(this.device, this.format, this.buffers.uniformBuffer, sampler, texView);
+              this.tablePipeline = tablePipelineObj.pipeline;
+              this.tableBindGroup = tablePipelineObj.uniformBindGroup;
+              console.debug('Renderer: created textured pipeline for table from embedded image');
+            } else {
+              console.info('Renderer: table model has no embedded image — not creating textured pipeline');
+            }
+          } catch (e) {
+            // any failure in creating the texture shouldn't break the app; continue without textured table
+            console.info('Failed to create textured pipeline from model image', e?.message || e);
+          }
+      }
+    } catch (e) {
+      // unexpected error — log and continue without table
+      console.warn('Unexpected error trying to load table models', e?.message || e);
     }
 
     // Sky resources: load panorama texture from public and create pipeline
@@ -121,6 +210,6 @@ export default class Renderer {
       updateSkyUniforms(this.device, this.buffers.skyUniformBuffer, vpMatrix, [eye[0], eye[1], eye[2]], 50.0);
     }
 
-    renderPass(this.device, this.context, this.pipeline, this.uniformBindGroup, this.buffers, this.depthState, this.instanceManager, this.sky);
+    renderPass(this.device, this.context, this.pipeline, this.uniformBindGroup, this.buffers, this.depthState, this.instanceManager, this.sky, this.tablePipeline, this.tableBindGroup);
   }
 }

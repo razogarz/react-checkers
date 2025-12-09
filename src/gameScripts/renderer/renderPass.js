@@ -3,7 +3,7 @@
  * Binds vertex/index/instance buffers, sets pipeline & bind groups and draws
  * the configured cube mesh using instanced rendering from instanceManager.
  */
-export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager, sky) {
+export function renderPass(device, context, pipeline, uniformBindGroup, buffers, depthState, instanceManager, sky, tablePipeline, tableBindGroup) {
   const commandEncoder = device.createCommandEncoder();
   const textureView = context.getCurrentTexture().createView();
 
@@ -38,6 +38,38 @@ export function renderPass(device, context, pipeline, uniformBindGroup, buffers,
     pass.setVertexBuffer(1, buffers.skyUvBuf);
     pass.setIndexBuffer(buffers.skyIdxBuf, 'uint32');
     pass.drawIndexed(buffers.skyIndexCount, 1, 0, 0, 0);
+  }
+
+  // draw table model (single-instance GLB) under the board if available
+  if (buffers.table) {
+    try { console.debug('renderPass: drawing table', { indexCount: buffers.table.indexCount, indexFormat: buffers.table.indexFormat, bounds: buffers.table.bounds }); } catch (e) {}
+    // choose textured pipeline+bindGroup if provided (texture present), otherwise fall back to main pipeline
+    if (tablePipeline && tableBindGroup) {
+      pass.setPipeline(tablePipeline);
+      pass.setBindGroup(0, tableBindGroup);
+      pass.setVertexBuffer(0, buffers.table.posBuf);
+      if (buffers.table.normBuf) pass.setVertexBuffer(1, buffers.table.normBuf);
+      if (buffers.table.uvBuf) pass.setVertexBuffer(2, buffers.table.uvBuf);
+      // instance data for textured pipeline is at buffer slot 3
+      if (buffers.singleInstanceBuf) pass.setVertexBuffer(3, buffers.singleInstanceBuf);
+    } else {
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, uniformBindGroup);
+      pass.setVertexBuffer(0, buffers.table.posBuf);
+      if (buffers.table.normBuf) pass.setVertexBuffer(1, buffers.table.normBuf);
+      // use the singleInstanceBuf for a single identity instance (main pipeline expects instance buffer at slot 2)
+      if (buffers.singleInstanceBuf) pass.setVertexBuffer(2, buffers.singleInstanceBuf);
+    }
+    pass.setIndexBuffer(buffers.table.idxBuf, buffers.table.indexFormat || 'uint32');
+    pass.drawIndexed(buffers.table.indexCount, 1, 0, 0, 0);
+
+    // restore cube buffers
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, uniformBindGroup);
+    pass.setVertexBuffer(0, buffers.posBuf);
+    pass.setVertexBuffer(1, buffers.normBuf);
+    pass.setVertexBuffer(2, buffers.instanceBuf);
+    pass.setIndexBuffer(buffers.idxBuf, 'uint16');
   }
 
   pass.setPipeline(pipeline);

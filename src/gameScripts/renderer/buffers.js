@@ -71,6 +71,18 @@ export function createBuffers(device, initialMaxInstances = 200) {
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
   });
 
+  // a single-instance buffer usable for drawing one-off models (like a table)
+  const singleInstanceData = new Float32Array(21);
+  // identity mat4
+  singleInstanceData.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], 0);
+  // color rgb at indices 16..18
+  singleInstanceData[16] = 1.0; singleInstanceData[17] = 1.0; singleInstanceData[18] = 1.0;
+  singleInstanceData[19] = 0.0; // reserved
+  singleInstanceData[20] = 0.0; // pulse
+
+  const singleInstanceBuf = device.createBuffer({ size: INSTANCE_SIZE, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(singleInstanceBuf, 0, singleInstanceData);
+
   const uniformBufferSize = (16 + 4) * 4; // vp(16) + lightDir(4)
   const uniformBuffer = device.createBuffer({
     size: uniformBufferSize,
@@ -106,6 +118,7 @@ export function createBuffers(device, initialMaxInstances = 200) {
     // cylinder (crown) resources
     cylinderPosBuf, cylinderNormBuf, cylinderIdxBuf, cylinderIndexCount: cylinderGeometry.indices.length,
     get instanceBuf() { return instanceBuf; },
+    singleInstanceBuf,
     uniformBuffer,
     skyUniformBuffer,
     get maxInstances() { return maxInstances; },

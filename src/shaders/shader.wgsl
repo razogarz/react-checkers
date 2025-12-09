@@ -65,7 +65,12 @@ fn vs_main(in : VertexInput) -> VertexOutput {
 fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   let light = normalize(u.lightDir);
   let ndotl = max(dot(normalize(in.vNormal), light), 0.0);
-  let ambient = 0.18;
-  let col = in.vColor * (ambient + 0.82 * ndotl);
+  // soften lighting so sides don't go nearly black — increase ambient and reduce directional dominance
+  let ambient = 0.28;
+  let diffuseTerm = ambient + 0.64 * ndotl;
+  let clamped = max(diffuseTerm, 0.22);
+  // small rim/light wrap to help silhouettes
+  let rim = pow(1.0 - abs(dot(normalize(in.vNormal), light)), 2.0) * 0.05;
+  let col = in.vColor * (clamped + rim);
   return vec4<f32>(col, 1.0);
 }
