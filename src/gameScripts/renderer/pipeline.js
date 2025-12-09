@@ -1,6 +1,7 @@
 import shaderCode from '../../shaders/shader.wgsl?raw';
 import { INSTANCE_SIZE } from '../constants/constants.js';
 import skyShaderCode from '../../shaders/sky.wgsl?raw';
+import pbrShaderCode from "../../shaders/pbr.wgsl?raw";
 
 /*
  * createPipeline — compile shaders and assemble a WebGPU render pipeline.
@@ -102,4 +103,58 @@ export async function createSkyPipeline(device, format, skyUniformBuffer, sample
   });
 
   return { pipeline, uniformBindGroup };
+}
+
+export async function createPBRPipeline(device, format) {
+  const pbrModule = device.createShaderModule({ code: pbrShaderCode });
+
+  const pipeline = device.createRenderPipeline({
+    layout: "auto",  // WebGPU infers bind groups from shader
+
+    vertex: {
+      module: pbrModule,
+      entryPoint: "vs_main",
+      buffers: [
+        // POSITION
+        {
+          arrayStride: 12, // 3 * 4
+          attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }]
+        },
+        // NORMAL
+        {
+          arrayStride: 12,
+          attributes: [{ shaderLocation: 1, offset: 0, format: "float32x3" }]
+        },
+        // UV
+        {
+          arrayStride: 8,
+          attributes: [{ shaderLocation: 2, offset: 0, format: "float32x2" }]
+        },
+        // TANGENT (xyz + w handedness)
+        {
+          arrayStride: 16,
+          attributes: [{ shaderLocation: 3, offset: 0, format: "float32x4" }]
+        }
+      ]
+    },
+
+    fragment: {
+      module: pbrModule,
+      entryPoint: "fs_main",
+      targets: [{ format }]
+    },
+
+    primitive: {
+      topology: "triangle-list",
+      cullMode: "back"
+    },
+
+    depthStencil: {
+      format: "depth24plus",
+      depthWriteEnabled: true,
+      depthCompare: "less"
+    }
+  });
+
+  return { pipeline };
 }

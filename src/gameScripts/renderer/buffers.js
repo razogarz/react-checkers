@@ -83,6 +83,8 @@ export function createBuffers(device, initialMaxInstances = 200) {
     posBuf, normBuf, idxBuf,
     // sky resources
     skyPosBuf, skyUvBuf, skyIdxBuf, skyIndexCount: sphereGeometry.indices.length,
+    // checker GLB primitive (will be assigned after GLB load)
+    checker: null, // expects { posBuf, normBuf, uvBuf, tanBuf, idxBuf, indexFormat, indexCount }
     get instanceBuf() { return instanceBuf; },
     uniformBuffer,
     skyUniformBuffer,

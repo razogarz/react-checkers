@@ -4,6 +4,7 @@ import InstanceManager from './instances.js';
 import { ensureDepthTexture } from './depth.js';
 import { updateUniforms, createSkyUniformBuffer, updateSkyUniforms } from './uniforms.js'; // Changed from updateUniformBuffer
 import { renderPass } from './renderPass.js';
+import { loadCheckerModel } from "../loader/loadCheckerGLB.js";
 
 export default class Renderer {
   constructor(device, context, canvas, format) {
@@ -22,11 +23,11 @@ export default class Renderer {
 
   async initialize() {
     this.buffers = createBuffers(this.device, 200);
-
     const p = await createPipeline(this.device, this.format, this.buffers.uniformBuffer);
     this.pipeline = p.pipeline;
     this.uniformBindGroup = p.uniformBindGroup;
-
+    const checker = await loadCheckerModel(this.device, "/checker.glb");
+    this.buffers.checker = checker;
     // Create instance manager before performing any async work (prevents races)
     this.instanceManager = new InstanceManager(
       this.device,

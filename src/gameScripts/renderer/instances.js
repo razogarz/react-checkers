@@ -13,6 +13,11 @@ export default class InstanceManager {
     this.getMaxInstances = maxInstancesRefGetter;
     this.instances = [];
     this.instanceCount = 0;
+
+    // ranges for splitting instance buffer draws
+    this.cubeCount = 0;            // number of board square instances (drawn with cube geometry)
+    this.firstCheckerIndex = 0;    // start index for checker piece instances
+    this.checkerCount = 0;         // number of checker piece instances
   }
 
   /**
@@ -47,6 +52,11 @@ export default class InstanceManager {
    * buildInstances — populate the instance list from a given gameState.
    * Iterates board squares, pieces, selection and valid moves to emit
    * the visible instances which will be uploaded for rendering.
+   *
+   * This function now records:
+   *  - this.cubeCount (board squares)
+   *  - this.firstCheckerIndex / this.checkerCount (checker pieces)
+   * so the renderer can draw board cubes, then GLB checkers, then remaining instances.
    */
   buildInstances(gameState) {
     this.instances = [];
@@ -66,7 +76,11 @@ export default class InstanceManager {
       }
     }
 
+    // record cubeCount (board) so we can draw them with cube geometry
+    this.cubeCount = this.instances.length;
+
     // pieces
+    let piecesAdded = 0;
     for (let y = 0; y < 8; y++) {
       for (let x = 0; x < 8; x++) {
         const piece = gameState.getPiece(x, y);
@@ -79,7 +93,12 @@ export default class InstanceManager {
         const px = (x - 3.5) * 1.0;
         const pz = (y - 3.5) * 1.0;
         const model = this.createModelMatrix(px, BOARD_Y + h / 2 + 0.06, pz, 0.75, h, 0.75);
+        // mark start of checker instances if this is the first piece
+        if (piecesAdded === 0) {
+          this.firstCheckerIndex = this.instances.length;
+        }
         this.pushInstance(model, color);
+        piecesAdded++;
 
         if (isKing) {
           const crownModel = this.createModelMatrix(px, BOARD_Y + h + 0.1, pz, 0.5, 0.15, 0.5);
@@ -97,6 +116,7 @@ export default class InstanceManager {
         }
       }
     }
+    this.checkerCount = piecesAdded;
 
     // Selected piece highlight and valid moves
     if (gameState.selected) {
